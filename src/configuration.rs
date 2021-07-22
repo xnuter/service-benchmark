@@ -6,7 +6,9 @@ use crate::bench_session::{BenchSession, BenchSessionBuilder, RateLadder, RateLa
 /// <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
 /// option. This file may not be copied, modified, or distributed
 /// except according to those terms.
-use crate::http_bench_session::{HttpBenchAdapter, HttpBenchAdapterBuilder};
+use crate::http_bench_session::{
+    HttpBenchAdapter, HttpBenchAdapterBuilder, HttpClientConfigBuilder, HttpRequestBuilder,
+};
 use crate::metrics::{DefaultConsoleReporter, ExternalMetricsServiceReporter};
 use clap::{clap_app, ArgMatches};
 use core::fmt;
@@ -169,7 +171,7 @@ impl BenchmarkConfig {
                 panic!("Illegal Prometheus Gateway addr `{}`", prometheus_addr);
             }
             metrics_destinations.push(Arc::new(PrometheusReporter::new(
-                test_case_name.clone(),
+                test_case_name,
                 prometheus_addr.to_string(),
                 matches.value_of("PROMETHEUS_JOB"),
             )));
@@ -187,19 +189,29 @@ impl BenchmarkConfig {
             }
 
             let http_config = HttpBenchAdapterBuilder::default()
-                .url(
-                    config
-                        .values_of("TARGET")
-                        .expect("misconfiguration for TARGET")
-                        .map(|s| s.to_string())
-                        .collect(),
+                .config(
+                    HttpClientConfigBuilder::default()
+                        .ignore_cert(config.is_present("IGNORE_CERT"))
+                        .conn_reuse(config.is_present("CONN_REUSE"))
+                        .http2_only(config.is_present("HTTP2_ONLY"))
+                        .build()
+                        .expect("HttpClientConfigBuilder failed"),
                 )
-                .ignore_cert(config.is_present("IGNORE_CERT"))
-                .conn_reuse(config.is_present("CONN_REUSE"))
-                .http2_only(config.is_present("HTTP2_ONLY"))
-                .method(config.value_of("METHOD").unwrap_or("GET").to_string())
-                .headers(BenchmarkConfig::get_multiple_values(config, "HEADER"))
-                .body(BenchmarkConfig::generate_body(config))
+                .request(
+                    HttpRequestBuilder::default()
+                        .url(
+                            config
+                                .values_of("TARGET")
+                                .expect("misconfiguration for TARGET")
+                                .map(|s| s.to_string())
+                                .collect(),
+                        )
+                        .method(config.value_of("METHOD").unwrap_or("GET").to_string())
+                        .headers(BenchmarkConfig::get_multiple_values(config, "HEADER"))
+                        .body(BenchmarkConfig::generate_body(config))
+                        .build()
+                        .expect("HttpRequestBuilder failed"),
+                )
                 .build()
                 .expect("BenchmarkModeBuilder failed");
             BenchmarkMode::Http(http_config)
